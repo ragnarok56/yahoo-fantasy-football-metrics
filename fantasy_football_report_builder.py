@@ -11,7 +11,7 @@ import yql
 from yql.storage import FileTokenStore
 
 from pdf_generator import PdfGenerator
-from metrics import CoachingEfficiency
+from metrics import CoachingEfficiency, Variance
 
 # noinspection SqlNoDataSourceInspection,SqlDialectInspection
 class FantasyFootballReport(object):
@@ -289,7 +289,20 @@ class FantasyFootballReport(object):
             ranked_team_scores.append(ranked_team)
 
         # set team matchup results for this week
-        team_matchup_result_dict = { name: value['result'] for pair in matchups_list for name, value in pair.items() }
+        #team_matchup_result_dict = { name: value['result'] for pair in matchups_list for name, value in pair.items() }
+        team_matchup_result_dict = {}
+
+        for matchup in matchups_list:
+            # matchups are always in pairs...
+            teams = matchup.items()
+            team1_name, team1_result = teams[0]
+            team2_name, team2_result = teams[1]
+
+            team1_result['opponent'] = team2_name
+            team2_result['opponent'] = team1_name
+
+            team_matchup_result_dict[team1_name] = team1_result
+            team_matchup_result_dict[team2_name] = team2_result
         
         index = 0
         results = []
@@ -301,7 +314,7 @@ class FantasyFootballReport(object):
 
             ranked_team_name = ranked_team.get("name")
             ranked_team_score = ranked_team.get("score")
-            ranked_team_matchup_result = team_matchup_result_dict.get(ranked_team_name)
+            ranked_team_matchup_result = team_matchup_result_dict.get(ranked_team_name)['result']
 
             ranked_team_score_without_team = list(ranked_team_scores)
             del ranked_team_score_without_team[ranked_team_scores.index(ranked_team)]
@@ -329,8 +342,10 @@ class FantasyFootballReport(object):
             results.append(ranked_team)
             index += 1
 
-            team_results_dict.get(ranked_team_name)["luck"] = "%.2f%%" % luck
-            team_results_dict.get(ranked_team_name)["matchup_result"] = ranked_team_matchup_result
+            team = team_results_dict.get(ranked_team_name)
+
+            team["luck"] = "%.2f%%" % luck
+            team["matchup_result"] = ranked_team_matchup_result
 
         results.sort(key=lambda x: x.get("luck"), reverse=True)
 
@@ -459,7 +474,7 @@ class FantasyFootballReport(object):
             "tied_coaching_efficiency_bool": tied_coaching_efficiency_bool,
             "tied_weekly_luck_bool": tied_weekly_luck_bool
         }
-        return team_results_dict, report_info_dict
+        return team_results_dict, report_info_dict, team_matchup_result_dict
 
     def create_pdf_report(self):
 
@@ -469,12 +484,26 @@ class FantasyFootballReport(object):
         time_series_points_data = []
         time_series_efficiency_data = []
         time_series_luck_data = []
+        
+        variance_scores = []
+
+        all_matchups = []
 
         week_counter = 1
         while week_counter <= int(self.chosen_week):
-            calculated_metrics_results = self.calculate_metrics(chosen_week=str(week_counter))
-            team_results_dict = calculated_metrics_results[0]
-            report_info_dict = calculated_metrics_results[1]
+            (team_results_dict, report_info_dict, matchups) = self.calculate_metrics(chosen_week=str(week_counter))
+
+            all_matchups.append(matchups)
+
+            print('Week {0} Matchups'.format(week_counter))
+            print(matchups)
+
+            variance = Variance()
+            weekly_variance = variance.execute(all_matchups)
+
+            if weekly_variance:
+                variance_scores.append(weekly_variance)
+                    
 
             # create team data for charts
             teams_data_list = []
@@ -521,6 +550,16 @@ class FantasyFootballReport(object):
                 for index, team_luck in enumerate(weekly_luck_data):
                     time_series_luck_data[index].append(team_luck)
             week_counter += 1
+
+        print(variance_scores)
+        for team in team_results_dict:
+            total_variance = 0
+            print(team)
+            for weekly_variance in variance_scores:
+                total_variance += weekly_variance[team]
+            avg_variance = total_variance / len(variance_scores)
+            print("Team: {0}, Variance: {1}".format(team, avg_variance))
+
 
         chart_data_list = [chosen_week_ordered_team_names, time_series_points_data, time_series_efficiency_data,
                            time_series_luck_data]

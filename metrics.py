@@ -1,4 +1,5 @@
 from operator import itemgetter
+from collections import defaultdict
 
 class CoachingEfficiency():
     # prohibited statuses to check team coaching efficiency eligibility
@@ -148,3 +149,43 @@ class CoachingEfficiency():
                 coaching_efficiency = 0.0
 
         return coaching_efficiency
+
+class Variance():
+
+    def execute(self, matchups):
+        """
+        current week opponent score vs their average score for every other week
+        """
+        weeks = len(matchups)
+
+        if weeks <= 1:
+            print("Unable to determine variance")
+            return None
+
+        team_scores = defaultdict(int)
+        team_averages = {}
+         
+        for week_matchup in matchups[:-1]:
+            for team_name, results in week_matchup.items():
+                team_scores[team_name] += float(results['score'])
+
+        for team_name, score in team_scores.items():
+            team_averages[team_name] = score / len(matchups[:-1])
+
+        print(team_scores)
+        print(team_averages)
+
+        current_matchup = matchups[-1]
+        variance = {}
+        for team_name, results in current_matchup.items():
+            opponent = results['opponent']
+            opp_avg = team_averages[opponent]
+            opp_cur = float(current_matchup[opponent]['score'])
+            print('Team: {0}, Opp Avg: {1}, Opp Cur: {2}'.format(team_name, opp_avg, opp_cur))
+            variance_score = opp_cur / opp_avg
+            print('Variance: {0}'.format(variance_score))
+            variance[team_name] = variance_score
+
+        return variance
+
+
