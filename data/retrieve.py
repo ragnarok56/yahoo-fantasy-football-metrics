@@ -1,9 +1,11 @@
 __author__ = "Wren J. R. (uberfastman)"
 __email__ = "wrenjr@yahoo.com"
 
-import collections
+from collections import defaultdict
 import os
 import logging
+import itertools
+from concurrent.futures import ThreadPoolExecutor
 # import sys
 
 from yffpy.models import Game, League, Settings, Standings
@@ -82,30 +84,49 @@ class RetrieveYffLeagueData(object):
         # print(self.league_key)
         # sys.exit()
 
-        league_metadata = yahoo_data.retrieve(str(yahoo_league_id) + "-league-metadata",
-                                              yahoo_query.get_league_metadata,
-                                              data_type_class=League,
-                                              new_data_dir=os.path.join(self.data_dir,
-                                                                        str(self.season),
-                                                                        self.league_key))
-        self.name = league_metadata.name
+        def _get_metadata():
+            return yahoo_data.retrieve(str(yahoo_league_id) + "-league-metadata",
+                                            yahoo_query.get_league_metadata,
+                                            data_type_class=League,
+                                            new_data_dir=os.path.join(self.data_dir,
+                                                                    str(self.season),
+                                                                self.league_key))
+
+        def _get_settings():
+            return yahoo_data.retrieve(str(yahoo_league_id) + "-league-settings",
+                                        yahoo_query.get_league_settings,
+                                        data_type_class=Settings,
+                                        new_data_dir=os.path.join(self.data_dir,
+                                                                str(self.season),
+                                                                self.league_key))                    
+        
+        print("Getting league metadata and settings...")
+        with ThreadPoolExecutor() as executor:
+            funcs = [
+                {
+                    "name": "league_metadata",
+                    "func": _get_metadata
+                },
+                {
+                    "name": "league_settings",
+                    "func": _get_settings
+                }
+            ]
+            for name in executor.map(self._load_data, funcs):
+                # print(name + " finished")
+                pass
+        
+        self.name = self.league_metadata.name
 
         # print(self.name)
-        # print(league_metadata)
+        # print(self.league_metadata)
+        # sys.exit()
+        # print(self.league_settings)
         # sys.exit()
 
-        league_settings = yahoo_data.retrieve(str(yahoo_league_id) + "-league-settings",
-                                              yahoo_query.get_league_settings,
-                                              data_type_class=Settings,
-                                              new_data_dir=os.path.join(self.data_dir,
-                                                                        str(self.season),
-                                                                        self.league_key))
-        # print(league_settings)
-        # sys.exit()
-
-        self.playoff_slots = league_settings.num_playoff_teams
-        self.num_regular_season_weeks = int(league_settings.playoff_start_week) - 1
-        self.roster_positions = league_settings.roster_positions
+        self.playoff_slots = self.league_settings.num_playoff_teams
+        self.num_regular_season_weeks = int(self.league_settings.playoff_start_week) - 1
+        self.roster_positions = self.league_settings.roster_positions
         self.roster_positions_by_type = self.get_roster_slots(self.roster_positions)
 
         # print(self.playoff_slots)
@@ -113,61 +134,117 @@ class RetrieveYffLeagueData(object):
         # print(self.roster_positions)
         # sys.exit()
 
-        self.standings = yahoo_data.retrieve(str(yahoo_league_id) + "-league-standings",
-                                             yahoo_query.get_league_standings,
-                                             data_type_class=Standings,
-                                             new_data_dir=os.path.join(self.data_dir,
-                                                                       str(self.season),
-                                                                       self.league_key))
+        def _get_standings():
+            return yahoo_data.retrieve(str(yahoo_league_id) + "-league-standings",
+                                            yahoo_query.get_league_standings,
+                                            data_type_class=Standings,
+                                            new_data_dir=os.path.join(self.data_dir,
+                                                                    str(self.season),
+                                                                    self.league_key))
         # print(self.league_standings_data)
         # sys.exit()
 
-        self.teams = yahoo_data.retrieve(str(yahoo_league_id) + "-league-teams",
-                                         yahoo_query.get_league_teams,
-                                         new_data_dir=os.path.join(self.data_dir,
-                                                                   str(self.season),
-                                                                   self.league_key))
+        def _get_teams():
+            return yahoo_data.retrieve(str(yahoo_league_id) + "-league-teams",
+                                        yahoo_query.get_league_teams,
+                                        new_data_dir=os.path.join(self.data_dir,
+                                                                str(self.season),
+                                                                self.league_key))
         # print(self.teams)
         # sys.exit()
 
-        # validate user selection of week for which to generate report
-        self.chosen_week = user_week_input_validation(self.config, selected_week, league_metadata.current_week)
+        print("Getting teams and standings...")
+        with ThreadPoolExecutor() as executor:
+            funcs = [
+                {
+                    "name": "standings",
+                    "func": _get_standings
+                },
+                {
+                    "name": "teams",
+                    "func": _get_teams
+                }
+            ]
+            for name in executor.map(self._load_data, funcs):
+                # print(name + " finished")
+                pass
 
+        # validate user selection of week for which to generate report
+        self.chosen_week = user_week_input_validation(self.config, selected_week, self.league_metadata.current_week)
+
+        print("Getting matchups...")
         # run yahoo queries requiring chosen week
-        self.matchups_by_week = {}
-        for wk in range(1, self.num_regular_season_weeks + 1):
-            self.matchups_by_week[wk] = yahoo_data.retrieve("week_" + str(self.chosen_week) + "-matchups_by_week",
-                                                            yahoo_query.get_league_matchups_by_week,
-                                                            params={"chosen_week": wk},
-                                                            new_data_dir=os.path.join(self.data_dir,
-                                                                                      str(self.season),
-                                                                                      self.league_key,
-                                                                                      "week_" + str(wk)))
+        with ThreadPoolExecutor() as executor:
+            def _get_week(week):
+                # print("querying " + week)
+                return {
+                    "week": week,
+                    "result": yahoo_data.retrieve("week_" + str(self.chosen_week) + "-matchups_by_week",
+                                        yahoo_query.get_league_matchups_by_week,
+                                        params={"chosen_week": week},
+                                        new_data_dir=os.path.join(self.data_dir,
+                                                                str(self.season),
+                                                                self.league_key,
+                                                                "week_" + week))
+                }
+
+            self.matchups_by_week = {}
+            weeks = [str(w) for w in range(1, self.num_regular_season_weeks + 1)]
+
+            for response in executor.map(_get_week, weeks):
+                self.matchups_by_week[response["week"]] = response["result"]
+                # print(response["week"] + " finished")
+            
         # print(self.matchups_by_week)
         # sys.exit()
 
-        self.rosters_by_week = {}
-        for wk in range(1, int(self.chosen_week) + 1):
-            self.rosters_by_week[str(wk)] = {
-                str(team.get("team").team_id):
-                    yahoo_data.retrieve(
-                        str(team.get("team").team_id) + "-" +
-                        str(team.get("team").name.decode("utf-8")).replace(" ", "_") + "-roster_positions",
-                        yahoo_query.get_team_roster_player_stats_by_week,
-                        params={"team_id": str(team.get("team").team_id), "chosen_week": str(wk)},
-                        new_data_dir=os.path.join(
-                            self.data_dir, str(self.season), self.league_key, "week_" + str(wk), "rosters_by_week")
-                    ) for team in self.teams
-            }
+        print("Getting rosters...")
+        with ThreadPoolExecutor() as executor:
+            def _get_roster(query):
+                team = query["team"]
+                week = query["week"]
+                team_id = str(team.get("team").team_id)
+                # print("querying {0}:{1}".format(week, team_id))
+                return {
+                    "week": week,
+                    "team": team,
+                    "result": yahoo_data.retrieve(
+                            team_id + "-" +
+                            str(team.get("team").name.decode("utf-8")).replace(" ", "_") + "-roster_positions",
+                            yahoo_query.get_team_roster_player_stats_by_week,
+                            params={"team_id": team_id, "chosen_week": week},
+                            new_data_dir=os.path.join(
+                                self.data_dir, str(self.season), self.league_key, "week_" + week, "rosters_by_week")
+                        )
+                }
+
+            self.rosters_by_week = defaultdict(dict)
+
+            weeks = [str(w) for w in range(1, int(self.chosen_week) + 1)]
+            
+            # build combinations of teams/weeks to query
+            query = [{"week": w, "team": t} for w in weeks for t in self.teams]
+
+            for response in executor.map(_get_roster, query):
+                week = response["week"]
+                team_id = response["team"].get("team").team_id
+                self.rosters_by_week[week][team_id] = response["result"]
+
+                # print("{0}:{1} finished".format(week, team_id))
+
         # print(self.rosters_by_week.keys())
         # sys.exit()
 
         self.playoff_probs = self.get_playoff_probs()
 
+    def _load_data(self, request):
+        self.__setattr__(request["name"], request["func"]() )
+        return request["name"]
+
     @staticmethod
     def get_roster_slots(roster_positions):
 
-        position_counts = collections.defaultdict(int)
+        position_counts = defaultdict(int)
         positions_active = []
         positions_flex = []
         positions_bench = ["BN", "IR"]

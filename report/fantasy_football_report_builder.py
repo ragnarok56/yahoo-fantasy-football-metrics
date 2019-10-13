@@ -119,7 +119,7 @@ class FantasyFootballReport(object):
         ]
         """
 
-        matchups = self.league_data.matchups_by_week.get(int(chosen_week))
+        matchups = self.league_data.matchups_by_week.get(chosen_week)
         matchup_list = []
         for matchup in matchups:
 
